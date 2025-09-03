@@ -1,4 +1,6 @@
 name: Run changed examples
+permissions:
+  contents: read
 
 on:
   pull_request:
