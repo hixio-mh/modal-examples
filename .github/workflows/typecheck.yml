@@ -9,6 +9,8 @@ on:
 jobs:
   mypy:
     name: MyPy
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
 
     steps:
