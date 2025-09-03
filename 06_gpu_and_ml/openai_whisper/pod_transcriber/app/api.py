@@ -3,7 +3,7 @@ import json
 import time
 from typing import List, NamedTuple
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 
 from . import config
 from .main import (
@@ -52,11 +52,18 @@ async def get_episode(podcast_id: str, episode_guid_hash: str):
 
 @web_app.get("/api/podcast/{podcast_id}")
 async def get_podcast(podcast_id: str):
+    import os
     web_app.state.volume.reload()
 
-    pod_metadata_path = config.PODCAST_METADATA_DIR / podcast_id / "metadata.json"
+    base_podcast_dir = config.PODCAST_METADATA_DIR
+    raw_pod_metadata_path = base_podcast_dir / podcast_id / "metadata.json"
+    pod_metadata_path = os.path.normpath(str(raw_pod_metadata_path))
+    base_dir_str = os.path.normpath(str(base_podcast_dir))
+    # Validate that resulting path is strictly inside base_podcast_dir
+    if not pod_metadata_path.startswith(base_dir_str):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id")
     previously_stored = True
-    if not pod_metadata_path.exists():
+    if not os.path.exists(pod_metadata_path):
         previously_stored = False
         raw_populate_podcast_metadata = populate_podcast_metadata.get_raw_f()
         loop = asyncio.get_running_loop()
@@ -66,11 +73,19 @@ async def get_podcast(podcast_id: str):
         pod_metadata = json.load(f)
 
     episodes = []
-    for file in (config.PODCAST_METADATA_DIR / podcast_id).iterdir():
-        if file == pod_metadata_path:
+    raw_podcast_dir = base_podcast_dir / podcast_id
+    podcast_dir_str = os.path.normpath(str(raw_podcast_dir))
+    # Validate directory for episode files
+    if not podcast_dir_str.startswith(base_dir_str):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id")
+    for file in raw_podcast_dir.iterdir():
+        file_path = os.path.normpath(str(file))
+        if file_path == pod_metadata_path:
             continue
-
-        with open(file, "r") as f:
+        # Ensure each found file is within the podcast directory
+        if not file_path.startswith(podcast_dir_str):
+            continue
+        with open(file_path, "r") as f:
             ep = json.load(f)
             ep["transcribed"] = get_transcript_path(ep["guid_hash"]).exists()
             episodes.append(ep)
