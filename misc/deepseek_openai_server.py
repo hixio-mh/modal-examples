@@ -60,6 +60,7 @@ import subprocess
 
 # Standard library imports
 from pathlib import Path
+from typing import Optional
 
 # Third-party imports
 import modal
@@ -153,7 +154,7 @@ download_image = (
 @app.function(
     image=download_image, volumes={cache_dir: model_cache}, timeout=30 * MINUTES
 )
-def download_model(repo_id, allow_patterns, revision: str = None):
+def download_model(repo_id, allow_patterns, revision: Optional[str] = None):
     from huggingface_hub import snapshot_download
 
     print(f"🦙 downloading model from {repo_id} if not present")
@@ -179,10 +180,10 @@ MODELS_DIR = "/deepseek"
 @app.function(
     image=vllm_image,
     gpu=modal.gpu.L40S(count=N_GPU),
-    container_idle_timeout=5 * MINUTES,
+    scaledown_window=5 * MINUTES,
     timeout=15 * MINUTES,
     volumes={MODELS_DIR: model_cache},
-    concurrency_limit=1,
+    max_containers=1,
 )
 @modal.asgi_app()
 def serve():

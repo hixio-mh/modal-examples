@@ -14,6 +14,7 @@
 # First, we’ll import the libraries we need locally and define some constants.
 
 from pathlib import Path
+from typing import Optional
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -21,9 +22,9 @@ import modal
 
 MINUTES = 60  # seconds
 
-app = modal.App("chat-with-pdf")
+app = modal.App("example-chat-with-pdf-vision")
 
-# ## Setting up dependenices
+# ## Setting up dependencies
 
 # In Modal, we define [container images](https://modal.com/docs/guide/custom-container) that run our serverless workloads.
 # We install the packages required for our application in those images.
@@ -35,7 +36,9 @@ model_image = (
     .apt_install("git")
     .pip_install(
         [
-            "git+https://github.com/illuin-tech/colpali.git@782edcd50108d1842d154730ad3ce72476a2d17d",  # we pin the commit id
+            "colpali-engine==0.3.5",
+            "transformers>=4.45.0",
+            "torch>=2.0.0",
             "hf_transfer==0.1.8",
             "qwen-vl-utils==0.0.8",
             "torchvision==0.19.1",
@@ -87,7 +90,7 @@ MODEL_REVISION = "aca78372505e6cb469c4fa6a35c60265b00ff5a4"
 
 # A Dict can hold a few gigabytes across keys of size up to 100 MiB,
 # so it works well for our chat session state, which is a few KiB per session,
-# and for our embeddings, with are a few hundred KiB per PDF page,
+# and for our embeddings, which are a few hundred KiB per PDF page,
 # up to about 100,000 pages of PDFs.
 
 # At a larger scale, we'd need to replace this with a database, like Postgres,
@@ -125,7 +128,8 @@ cache_volume = modal.Volume.from_name("hf-hub-cache", create_if_missing=True)
 
 
 # Running this function will download the model weights to the cache volume.
-# Otherwise, the model weights will be downloaded on the first query.
+# Otherwise, the model weights will be downloaded on the first query. For more on storing model weights on Modal, see
+# [this guide](https://modal.com/docs/guide/model-weights).
 
 
 @app.function(
@@ -159,7 +163,7 @@ def download_model():
 @app.cls(
     image=model_image,
     gpu="A100-80GB",
-    container_idle_timeout=10 * MINUTES,  # spin down when inactive
+    scaledown_window=10 * MINUTES,  # spin down when inactive
     volumes={"/vol/pdfs/": pdf_volume, CACHE_DIR: cache_volume},
 )
 class Model:
@@ -208,16 +212,12 @@ class Model:
         # Generated embeddings from the image(s)
         BATCH_SZ = 4
         pdf_embeddings = []
-        batches = [
-            images[i : i + BATCH_SZ] for i in range(0, len(images), BATCH_SZ)
-        ]
+        batches = [images[i : i + BATCH_SZ] for i in range(0, len(images), BATCH_SZ)]
         for batch in batches:
             batch_images = self.colqwen2_processor.process_images(batch).to(
                 self.colqwen2_model.device
             )
-            pdf_embeddings += list(
-                self.colqwen2_model(**batch_images).to("cpu")
-            )
+            pdf_embeddings += list(self.colqwen2_model(**batch_images).to("cpu"))
 
         # Store the image embeddings in the session, for later retrieval
         session.pdf_embeddings = pdf_embeddings
@@ -292,9 +292,7 @@ class Model:
         )
         inputs = inputs.to("cuda:0")
 
-        generated_ids = self.qwen2_vl_model.generate(
-            **inputs, max_new_tokens=512
-        )
+        generated_ids = self.qwen2_vl_model.generate(**inputs, max_new_tokens=512)
         generated_ids_trimmed = [
             out_ids[len(in_ids) :]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -310,7 +308,7 @@ class Model:
 # ## Loading PDFs as images
 
 # Vision-Language Models operate on images, not PDFs directly,
-# so we need to convert out PDFs into images first.
+# so we need to convert our PDFs into images first.
 
 # We separate this from our indexing and chatting logic --
 # we run on a different container with different dependencies.
@@ -347,7 +345,11 @@ def convert_pdf_to_images(pdf_bytes):
 
 
 @app.local_entrypoint()
-def main(question: str = None, pdf_path: str = None, session_id: str = None):
+def main(
+    question: Optional[str] = None,
+    pdf_path: Optional[str] = None,
+    session_id: Optional[str] = None,
+):
     model = Model()
     if session_id is None:
         session_id = str(uuid4())
@@ -359,8 +361,7 @@ def main(question: str = None, pdf_path: str = None, session_id: str = None):
         if pdf_path.startswith("http"):
             pdf_bytes = urlopen(pdf_path).read()
         else:
-            pdf_path = Path(pdf_path)
-            pdf_bytes = pdf_path.read_bytes()
+            pdf_bytes = Path(pdf_path).read_bytes()
 
         print("Indexing PDF from", pdf_path)
         model.index_pdf.remote(session_id, pdf_bytes)
@@ -407,9 +408,9 @@ web_image = pdf_image.pip_install(
     # gradio requires sticky sessions
     # so we limit the number of concurrent containers to 1
     # and allow it to scale to 1000 concurrent inputs
-    concurrency_limit=1,
-    allow_concurrent_inputs=1000,
+    max_containers=1,
 )
+@modal.concurrent(max_inputs=1000)
 @modal.asgi_app()
 def ui():
     import uuid

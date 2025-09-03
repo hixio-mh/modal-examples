@@ -43,7 +43,7 @@ app = modal.App("example-discord-bot", image=image)
 
 # In a real application, this might be [music generation](https://modal.com/docs/examples/musicgen),
 # a [chatbot](https://modal.com/docs/examples/chat_with_pdf_vision),
-# or [interacting with a database](https://modal.com/docs/examples/covid_datasette).
+# or [interacting with a database](https://modal.com/docs/examples/cron_datasette).
 
 # Here, we just hit a simple free public API:
 # the [Free Public APIs](https://www.freepublicapis.com) API,
@@ -53,12 +53,13 @@ app = modal.App("example-discord-bot", image=image)
 # We convert the response into a Markdown-formatted message.
 
 # We turn our Python function into a Modal Function by attaching the `app.function` decorator.
-# We make the function `async` and set `allow_concurrent_inputs` to a large value because
+# We make the function `async` and add `@modal.concurrent()` with a large `max_inputs` value, because
 # communicating with an external API is a classic case for better performance from asynchronous execution.
 # Modal handles things like the async event loop for us.
 
 
-@app.function(allow_concurrent_inputs=1000)
+@app.function()
+@modal.concurrent(max_inputs=1000)
 async def fetch_api() -> str:
     import aiohttp
 
@@ -69,7 +70,9 @@ async def fetch_api() -> str:
             async with session.get(url) as response:
                 response.raise_for_status()
                 data = await response.json()
-                message = f"# {data.get('emoji') or '🤖'} [{data['title']}]({data['source']})"
+                message = (
+                    f"# {data.get('emoji') or '🤖'} [{data['title']}]({data['source']})"
+                )
                 message += f"\n _{''.join(data['description'].splitlines())}_"
         except Exception as e:
             message = f"# 🤖: Oops! {e}"
@@ -128,7 +131,8 @@ async def send_to_discord(payload: dict, app_id: str, interaction_token: str):
 # Modal Function. This reduces a bit of extra latency, but couples these two Functions more tightly.
 
 
-@app.function(allow_concurrent_inputs=1000)
+@app.function()
+@modal.concurrent(max_inputs=1000)
 async def reply(app_id: str, interaction_token: str):
     message = await fetch_api.local()
     await send_to_discord({"content": message}, app_id, interaction_token)
@@ -209,8 +213,7 @@ def create_slash_command(force: bool = False):
 
     commands = response.json()
     command_exists = any(
-        command.get("name") == command_description["name"]
-        for command in commands
+        command.get("name") == command_description["name"] for command in commands
     )
 
     # and only recreate it if the force flag is set
@@ -239,7 +242,7 @@ def create_slash_command(force: bool = False):
 
 # 1. We'll need to respond within five seconds or Discord will assume we are dead.
 # Modal's fast-booting serverless containers usually start faster than that,
-# but it's not guaranteed. So we'll add the `keep_warm` parameter to our
+# but it's not guaranteed. So we'll add the `min_containers` parameter to our
 # Function so that there's at least one live copy ready to respond quickly at any time.
 # Modal charges a minimum of about 2¢ an hour for live containers (pricing details [here](https://modal.com/pricing)).
 # Note that that still fits within Modal's $30/month of credits on the free tier.
@@ -259,9 +262,8 @@ def create_slash_command(force: bool = False):
 # [this guide](https://modal.com/docs/guide/webhooks).
 
 
-@app.function(
-    secrets=[discord_secret], keep_warm=1, allow_concurrent_inputs=1000
-)
+@app.function(secrets=[discord_secret], min_containers=1)
+@modal.concurrent(max_inputs=1000)
 @modal.asgi_app()
 def web_app():
     from fastapi import FastAPI, HTTPException, Request

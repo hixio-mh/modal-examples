@@ -71,9 +71,7 @@ def spawn_server() -> subprocess.Popen:
             # If so, a connection can never be made.
             retcode = process.poll()
             if retcode is not None:
-                raise RuntimeError(
-                    f"launcher exited unexpectedly with code {retcode}"
-                )
+                raise RuntimeError(f"launcher exited unexpectedly with code {retcode}")
 
 
 tei_image = (
@@ -129,10 +127,10 @@ def generate_batches(xs, batch_size):
 @app.cls(
     gpu=GPU_CONFIG,
     image=tei_image,
-    concurrency_limit=GPU_CONCURRENCY,
-    allow_concurrent_inputs=True,
+    max_containers=GPU_CONCURRENCY,
     retries=3,
 )
+@modal.concurrent(max_inputs=10)
 class TextEmbeddingsInference:
     @modal.enter()
     def open_connection(self):
@@ -298,7 +296,10 @@ def embed_dataset(down_scale: float = 1, batch_size: int = 512 * 50):
     acc_chunks = []
     embeddings = []
     for resp in model.embed.map(
-        batches, order_outputs=False, return_exceptions=True
+        batches,
+        order_outputs=False,
+        return_exceptions=True,
+        wrap_return_exceptions=False,
     ):
         if isinstance(resp, Exception):
             print(f"Exception: {resp}")
@@ -327,9 +328,7 @@ def embed_dataset(down_scale: float = 1, batch_size: int = 512 * 50):
     }
 
     if SAVE_TO_DISK:
-        save_dataset_to_intermediate_checkpoint(
-            acc_chunks, embeddings, batch_size
-        )
+        save_dataset_to_intermediate_checkpoint(acc_chunks, embeddings, batch_size)
 
     if UPLOAD_TO_HF:
         upload_result_to_hf(batch_size)

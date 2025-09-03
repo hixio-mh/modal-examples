@@ -4,7 +4,7 @@
 
 # # Run large and small language models with llama.cpp (DeepSeek-R1, Phi-4)
 
-# This example demonstrate how to run small (Phi-4) and large (DeepSeek-R1)
+# This example demonstrates how to run small (Phi-4) and large (DeepSeek-R1)
 # language models on Modal with [`llama.cpp`](https://github.com/ggerganov/llama.cpp).
 
 # By default, this example uses DeepSeek-R1 to produce a "Flappy Bird" game in Python --
@@ -14,10 +14,11 @@
 # our jobs are still safe, for now.
 
 # <center>
-# <a href="https://gist.github.com/charlesfrye/a3788c61019c32cb7947f4f5b1c04818"> <video controls autoplay loop muted> <source src="https://modal-cdn.com/example-flap-py.mp4" type="video/mp4"> </video> </a>
+# <a href="https://gist.github.com/charlesfrye/a3788c61019c32cb7947f4f5b1c04818" aria-label="View the generated code"> <video controls autoplay loop muted> <source src="https://modal-cdn.com/example-flap-py.mp4" type="video/mp4"> </video> </a>
 # </center>
 
 from pathlib import Path
+from typing import Optional
 
 import modal
 
@@ -59,25 +60,23 @@ app = modal.App("example-llama-cpp")
 
 @app.local_entrypoint()
 def main(
-    prompt: str = None,
+    prompt: Optional[str] = None,
     model: str = "DeepSeek-R1",  # or "phi-4"
     n_predict: int = -1,  # max number of tokens to predict, -1 is infinite
-    args: str = None,  # string of arguments to pass to llama.cpp's cli
-    fast_download: bool = None,  # download model before starting inference function
+    args: Optional[str] = None,  # string of arguments to pass to llama.cpp's cli
 ):
     """Run llama.cpp inference on Modal for phi-4 or deepseek r1."""
     import shlex
 
     org_name = "unsloth"
-    # two sample models: the diminuitive phi-4 and the chonky deepseek r1
+    # two sample models: the diminutive phi-4 and the chonky deepseek r1
     if model.lower() == "phi-4":
         model_name = "phi-4-GGUF"
         quant = "Q2_K"
         model_entrypoint_file = f"phi-4-{quant}.gguf"
         model_pattern = f"*{quant}*"
         revision = None
-        if args is not None:
-            args = shlex.split(args)
+        parsed_args = DEFAULT_PHI_ARGS if args is None else shlex.split(args)
     elif model.lower() == "deepseek-r1":
         model_name = "DeepSeek-R1-GGUF"
         quant = "UD-IQ1_S"
@@ -86,23 +85,19 @@ def main(
         )
         model_pattern = f"*{quant}*"
         revision = "02656f62d2aa9da4d3f0cdb34c341d30dd87c3b6"
-        if args is None:
-            args = DEFAULT_DEEPSEEK_R1_ARGS
-        else:
-            args = shlex.split(args)
+        parsed_args = DEFAULT_DEEPSEEK_R1_ARGS if args is None else shlex.split(args)
     else:
         raise ValueError(f"Unknown model {model}")
 
     repo_id = f"{org_name}/{model_name}"
-    if fast_download or model.lower() == "deepseek-r1":
-        download_model.remote(repo_id, [model_pattern], revision)
+    download_model.remote(repo_id, [model_pattern], revision)
 
     # call out to a `.remote` Function on Modal for inference
     result = llama_cpp_inference.remote(
         model_entrypoint_file,
         prompt,
         n_predict,
-        args,
+        parsed_args,
         store_output=model.lower() == "deepseek-r1",
     )
     output_path = Path("/tmp") / f"llama-cpp-{model}.txt"
@@ -152,6 +147,14 @@ DEFAULT_DEEPSEEK_R1_ARGS = [  # good default llama.cpp cli args for deepseek-r1
     "8192",
 ]
 
+DEFAULT_PHI_ARGS = [  # good default llama.cpp cli args for phi-4
+    "--threads",
+    "16",
+    "-no-cnv",
+    "--ctx-size",
+    "16384",
+]
+
 # ## Compiling llama.cpp with CUDA support
 
 # In order to run inference, we need the model's weights
@@ -182,9 +185,7 @@ tag = f"{cuda_version}-{flavor}-{operating_sys}"
 
 image = (
     modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.12")
-    .apt_install(
-        "git", "build-essential", "cmake", "curl", "libcurl4-openssl-dev"
-    )
+    .apt_install("git", "build-essential", "cmake", "curl", "libcurl4-openssl-dev")
     .run_commands("git clone https://github.com/ggerganov/llama.cpp")
     .run_commands(
         "cmake llama.cpp -B llama.cpp/build "
@@ -203,8 +204,8 @@ image = (
 # we download them from Hugging Face.
 
 # Modal is serverless, so disks are by default ephemeral.
-# To make sure our weights don't disappear between runs
-# and require a long download step, we store them in a
+# To make sure our weights don't disappear between runs,
+# which would trigger a long download, we store them in a
 # Modal [Volume](https://modal.com/docs/guide/volumes).
 
 # For more on how to use Modal Volumes to store model weights,
@@ -223,7 +224,7 @@ download_image = (
 @app.function(
     image=download_image, volumes={cache_dir: model_cache}, timeout=30 * MINUTES
 )
-def download_model(repo_id, allow_patterns, revision: str = None):
+def download_model(repo_id, allow_patterns, revision: Optional[str] = None):
     from huggingface_hub import snapshot_download
 
     print(f"🦙 downloading model from {repo_id} if not present")
@@ -310,9 +311,9 @@ results_dir = "/root/results"
 )
 def llama_cpp_inference(
     model_entrypoint_file: str,
-    prompt: str = None,
+    prompt: Optional[str] = None,
     n_predict: int = -1,
-    args: list[str] = None,
+    args: Optional[list[str]] = None,
     store_output: bool = True,
 ):
     import subprocess
@@ -320,7 +321,8 @@ def llama_cpp_inference(
 
     if prompt is None:
         prompt = DEFAULT_PROMPT  # see end of file
-    prompt = "<｜User｜>" + prompt + "<think>"
+    if "deepseek" in model_entrypoint_file.lower():
+        prompt = "<｜User｜>" + prompt + "<think>"
     if args is None:
         args = []
 
@@ -346,7 +348,7 @@ def llama_cpp_inference(
         str(n_predict),
     ] + args
 
-    print("🦙 running commmand:", command, sep="\n\t")
+    print("🦙 running command:", command, sep="\n\t")
     p = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=False
     )
@@ -354,9 +356,7 @@ def llama_cpp_inference(
     stdout, stderr = collect_output(p)
 
     if p.returncode != 0:
-        raise subprocess.CalledProcessError(
-            p.returncode, command, stdout, stderr
-        )
+        raise subprocess.CalledProcessError(p.returncode, command, stdout, stderr)
 
     if store_output:  # save results to a Modal Volume if requested
         print(f"🦙 saving results for {result_id}")
