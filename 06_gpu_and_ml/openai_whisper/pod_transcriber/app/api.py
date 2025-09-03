@@ -38,7 +38,12 @@ async def get_episode(podcast_id: str, episode_guid_hash: str):
     try:
         resolved_base_dir = base_dir.resolve(strict=False)
         resolved_metadata_path = episode_metadata_path.resolve(strict=False)
-        resolved_metadata_path.relative_to(resolved_base_dir)
+        # Use os.path.commonpath to strictly check containment
+        base_path_str = str(resolved_base_dir)
+        metadata_path_str = str(resolved_metadata_path)
+        common_path = os.path.commonpath([base_path_str, metadata_path_str])
+        if common_path != base_path_str:
+            raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
 
