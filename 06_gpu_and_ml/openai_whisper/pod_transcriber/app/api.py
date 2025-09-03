@@ -35,9 +35,11 @@ async def get_episode(podcast_id: str, episode_guid_hash: str):
 
     # Validate that episode_metadata_path is strictly inside PODCAST_METADATA_DIR
     base_dir = config.PODCAST_METADATA_DIR
-    norm_metadata_path = os.path.normpath(str(episode_metadata_path))
-    norm_base_dir = os.path.normpath(str(base_dir))
-    if not norm_metadata_path.startswith(norm_base_dir):
+    try:
+        resolved_base_dir = base_dir.resolve(strict=False)
+        resolved_metadata_path = episode_metadata_path.resolve(strict=False)
+        resolved_metadata_path.relative_to(resolved_base_dir)
+    except Exception:
         raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
 
     web_app.state.volume.reload()
