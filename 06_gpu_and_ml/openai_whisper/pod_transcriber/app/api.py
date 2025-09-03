@@ -4,7 +4,7 @@ import time
 from typing import List, NamedTuple
 
 from fastapi import FastAPI, Request, HTTPException
-
+import os
 from . import config
 from .main import (
     get_episode_metadata_path,
@@ -32,6 +32,13 @@ class InProgressJob(NamedTuple):
 async def get_episode(podcast_id: str, episode_guid_hash: str):
     episode_metadata_path = get_episode_metadata_path(podcast_id, episode_guid_hash)
     transcription_path = get_transcript_path(episode_guid_hash)
+
+    # Validate that episode_metadata_path is strictly inside PODCAST_METADATA_DIR
+    base_dir = config.PODCAST_METADATA_DIR
+    norm_metadata_path = os.path.normpath(str(episode_metadata_path))
+    norm_base_dir = os.path.normpath(str(base_dir))
+    if not norm_metadata_path.startswith(norm_base_dir):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
 
     web_app.state.volume.reload()
 
