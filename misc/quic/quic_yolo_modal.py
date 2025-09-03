@@ -403,6 +403,7 @@ async def yolo_quic_server(
     rendezvous_url: str,
     target_id: str,
     local_port: int = 5555,
+    local_ip: str = "127.0.0.1",
 ):
     import aiohttp
     import cv2
@@ -413,7 +414,7 @@ async def yolo_quic_server(
 
     # discover public mapping via STUN
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", local_port))
+    sock.bind((local_ip, local_port))
     sock.setblocking(False)
 
     pub_ip, pub_port = await get_ext_addr(sock)
