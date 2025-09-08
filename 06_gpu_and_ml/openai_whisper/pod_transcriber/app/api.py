@@ -3,8 +3,8 @@ import json
 import time
 from typing import List, NamedTuple
 
-from fastapi import FastAPI, Request
-
+from fastapi import FastAPI, Request, HTTPException
+import os
 from . import config
 from .main import (
     get_episode_metadata_path,
@@ -30,10 +30,24 @@ class InProgressJob(NamedTuple):
 
 @web_app.get("/api/episode/{podcast_id}/{episode_guid_hash}")
 async def get_episode(podcast_id: str, episode_guid_hash: str):
-    episode_metadata_path = get_episode_metadata_path(
-        podcast_id, episode_guid_hash
-    )
+    episode_metadata_path = get_episode_metadata_path(podcast_id, episode_guid_hash)
     transcription_path = get_transcript_path(episode_guid_hash)
+
+    # Validate that episode_metadata_path is strictly inside PODCAST_METADATA_DIR
+    base_dir = config.PODCAST_METADATA_DIR
+    try:
+        resolved_base_dir = base_dir.resolve(strict=False)
+        resolved_metadata_path = episode_metadata_path.resolve(strict=False)
+        # Use os.path.commonpath to strictly check containment
+        base_path_str = str(resolved_base_dir)
+        metadata_path_str = str(resolved_metadata_path)
+        common_path = os.path.commonpath([base_path_str, metadata_path_str])
+        if common_path != base_path_str:
+            raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
+
+    web_app.state.volume.reload()
 
     with open(episode_metadata_path, "r") as f:
         metadata = json.load(f)
@@ -52,30 +66,40 @@ async def get_episode(podcast_id: str, episode_guid_hash: str):
 
 @web_app.get("/api/podcast/{podcast_id}")
 async def get_podcast(podcast_id: str):
-    pod_metadata_path = (
-        config.PODCAST_METADATA_DIR / podcast_id / "metadata.json"
-    )
+    import os
+    web_app.state.volume.reload()
+
+    base_podcast_dir = config.PODCAST_METADATA_DIR
+    raw_pod_metadata_path = base_podcast_dir / podcast_id / "metadata.json"
+    pod_metadata_path = os.path.normpath(str(raw_pod_metadata_path))
+    base_dir_str = os.path.normpath(str(base_podcast_dir))
+    # Validate that resulting path is strictly inside base_podcast_dir
+    if not pod_metadata_path.startswith(base_dir_str):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id")
     previously_stored = True
-    if not pod_metadata_path.exists():
+    if not os.path.exists(pod_metadata_path):
         previously_stored = False
-        # Don't run this Modal function in a separate container in the cloud, because then
-        # we'd be exposed to a race condition with the NFS if we don't wait for the write
-        # to propogate.
         raw_populate_podcast_metadata = populate_podcast_metadata.get_raw_f()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, raw_populate_podcast_metadata, podcast_id
-        )
+        await loop.run_in_executor(None, raw_populate_podcast_metadata, podcast_id)
 
     with open(pod_metadata_path, "r") as f:
         pod_metadata = json.load(f)
 
     episodes = []
-    for file in (config.PODCAST_METADATA_DIR / podcast_id).iterdir():
-        if file == pod_metadata_path:
+    raw_podcast_dir = base_podcast_dir / podcast_id
+    podcast_dir_str = os.path.normpath(str(raw_podcast_dir))
+    # Validate directory for episode files
+    if not podcast_dir_str.startswith(base_dir_str):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id")
+    for file in raw_podcast_dir.iterdir():
+        file_path = os.path.normpath(str(file))
+        if file_path == pod_metadata_path:
             continue
-
-        with open(file, "r") as f:
+        # Ensure each found file is within the podcast directory
+        if not file_path.startswith(podcast_dir_str):
+            continue
+        with open(file_path, "r") as f:
             ep = json.load(f)
             ep["transcribed"] = get_transcript_path(ep["guid_hash"]).exists()
             episodes.append(ep)
@@ -91,6 +115,8 @@ async def get_podcast(podcast_id: str):
 @web_app.post("/api/podcasts")
 async def podcasts_endpoint(request: Request):
     import dataclasses
+
+    web_app.state.volume.reload()
 
     form = await request.form()
     name = form["podcast"]
@@ -119,9 +145,7 @@ async def transcribe_job(podcast_id: str, episode_id: str):
         pass
 
     call = process_episode.spawn(podcast_id, episode_id)
-    in_progress[episode_id] = InProgressJob(
-        call_id=call.object_id, start_time=now
-    )
+    in_progress[episode_id] = InProgressJob(call_id=call.object_id, start_time=now)
 
     return {"call_id": call.object_id}
 
@@ -150,13 +174,11 @@ async def poll_status(call_id: str):
     except IndexError:
         return dict(finished=False)
 
-    assert map_root.function_name == "main.transcribe_episode"
+    assert map_root.function_name.split(".")[-1] == "transcribe_episode"
 
     leaves = map_root.children
     tasks = len(set([leaf.task_id for leaf in leaves]))
-    done_segments = len(
-        [leaf for leaf in leaves if leaf.status == InputStatus.SUCCESS]
-    )
+    done_segments = len([leaf for leaf in leaves if leaf.status == InputStatus.SUCCESS])
     total_segments = len(leaves)
     finished = map_root.status == InputStatus.SUCCESS
 

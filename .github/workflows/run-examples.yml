@@ -1,4 +1,6 @@
-name: Run
+name: Run changed examples
+permissions:
+  contents: read
 
 on:
   pull_request:
@@ -21,8 +23,6 @@ concurrency:
 env:
   TERM: linux
   TERMINFO: /etc/terminfo
-  MODAL_TOKEN_ID: ${{ secrets.MODAL_MODAL_LABS_TOKEN_ID }}
-  MODAL_TOKEN_SECRET: ${{ secrets.MODAL_MODAL_LABS_TOKEN_SECRET }}
   MODAL_ENVIRONMENT: examples
 
 jobs:
@@ -40,21 +40,13 @@ jobs:
 
       - name: Find changed examples
         id: diff
-        uses: tj-actions/changed-files@v44
-        with:
-          files: "**.py"
-          files_ignore: "internal/**,misc/**"
-          matrix: true
-
-      - name: List all changed examples
-        run: echo '${{ steps.diff.outputs.all_changed_files }}'
+        run: python3 -m internal.generate_diff_matrix
 
   # Run each changed example, using the output of the previous step as a job matrix
   run-changed:
     name: Run changed example
     needs: [diff-matrix]
-    if:
-      ${{ needs.diff-matrix.outputs.matrix != '[]' &&
+    if: ${{ needs.diff-matrix.outputs.matrix != '[]' &&
       needs.diff-matrix.outputs.matrix != '' }}
     runs-on: ubuntu-24.04
     strategy:
@@ -74,3 +66,6 @@ jobs:
           echo "Running ${{ matrix.file }}"
           stem=$(basename "${{ matrix.file }}" .py)
           python3 -m internal.run_example $stem || exit $?
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_MODAL_LABS_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_MODAL_LABS_TOKEN_SECRET }}

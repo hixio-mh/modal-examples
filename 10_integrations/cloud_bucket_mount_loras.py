@@ -16,7 +16,7 @@
 
 # By the end of this example, we've deployed a "playground" app where anyone with a browser can try
 # out these custom models. That's the power of Modal: custom, autoscaling AI applications, deployed in seconds.
-# You can try out our deployment [here](https://modal-labs-examples--loras-galore-ui.modal.run).
+# You can try out our deployment [here](https://modal-labs-examples--example-cloud-bucket-mount-loras-ui.modal.run).
 
 # ## Basic setup
 
@@ -74,7 +74,7 @@ with image.imports():
 # (almost) as if it were a local directory.
 
 app = modal.App(
-    "loras-galore",
+    "example-cloud-bucket-mount-loras",
     image=image,
     volumes={
         MOUNT_PATH: modal.CloudBucketMount(
@@ -174,7 +174,7 @@ def download_lora(repository_id: str) -> Optional[str]:
 # We load Stable Diffusion XL 1.0 as a base model, then, when doing inference,
 # we load whichever LoRA the user specifies from the S3 bucket.
 # For more on the decorators we use on the methods below to speed up building and booting,
-# check out the [container lifecycle hooks guide](https://modal.com/docs/guide/lifecycle-hooks).
+# check out the [container lifecycle hooks guide](https://modal.com/docs/guide/lifecycle-functions).
 
 
 @app.cls(
@@ -269,14 +269,14 @@ web_image = modal.Image.debian_slim(python_version="3.12").pip_install(
 
 @app.function(
     image=web_image,
-    keep_warm=1,
-    container_idle_timeout=60 * 20,
+    min_containers=1,
+    scaledown_window=60 * 20,
     # gradio requires sticky sessions
     # so we limit the number of concurrent containers to 1
     # and allow it to scale to 100 concurrent inputs
-    allow_concurrent_inputs=100,
-    concurrency_limit=1,
+    max_containers=1,
 )
+@modal.concurrent(max_inputs=100)
 @modal.asgi_app()
 def ui():
     """A simple Gradio interface around our LoRA inference."""
@@ -289,8 +289,7 @@ def ui():
 
     # determine which loras are available
     lora_ids = [
-        f"{lora_dir.parent.stem}/{lora_dir.stem}"
-        for lora_dir in LORAS_PATH.glob("*/*")
+        f"{lora_dir.parent.stem}/{lora_dir.stem}" for lora_dir in LORAS_PATH.glob("*/*")
     ]
 
     # pick one to be default, set a default prompt
@@ -318,9 +317,7 @@ def ui():
     iface = gr.Interface(
         go,
         inputs=[  # the inputs to go/our inference function
-            gr.Dropdown(
-                choices=lora_ids, value=default_lora_id, label="👉 LoRA ID"
-            ),
+            gr.Dropdown(choices=lora_ids, value=default_lora_id, label="👉 LoRA ID"),
             gr.Textbox(default_prompt, label="🎨 Prompt"),
             gr.Number(value=8888, label="🎲 Random Seed"),
         ],

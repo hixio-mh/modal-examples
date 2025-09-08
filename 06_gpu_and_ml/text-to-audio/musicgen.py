@@ -11,6 +11,7 @@
 # ## Setting up dependencies
 
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 import modal
@@ -61,12 +62,11 @@ def load_model(and_return=False):
 # we need to store the weights somewhere besides our local filesystem.
 
 # So we add a Modal [Volume](https://modal.com/docs/guide/volumes)
-# to store the weights in the cloud.
+# to store the weights in the cloud. For more on storing model weights on Modal, see
+# [this guide](https://modal.com/docs/guide/model-weights).
 
 cache_dir = "/cache"
-model_cache = modal.Volume.from_name(
-    "audiocraft-model-cache", create_if_missing=True
-)
+model_cache = modal.Volume.from_name("audiocraft-model-cache", create_if_missing=True)
 
 # We don't need to change any of the model loading code --
 # we just need to make sure the model gets stored in the right directory.
@@ -144,9 +144,7 @@ class MusicGen:
 
             # generate next segment
             generated_duration = (
-                segment_duration
-                if context is None
-                else (segment_duration - overlap)
+                segment_duration if context is None else (segment_duration - overlap)
             )
             print(f"🎼 generating {generated_duration} seconds of music")
             self.model.set_generation_params(duration=segment_duration)
@@ -199,7 +197,7 @@ class MusicGen:
 
 @app.local_entrypoint()
 def main(
-    prompt: str = None,
+    prompt: Optional[str] = None,
     duration: int = 10,
     overlap: int = 15,
     format: str = "wav",  # or mp3
@@ -247,9 +245,9 @@ def main(
     # Gradio requires sticky sessions
     # so we limit the number of concurrent containers to 1
     # and allow it to scale to 1000 concurrent inputs
-    concurrency_limit=1,
-    allow_concurrent_inputs=1000,
+    max_containers=1,
 )
+@modal.concurrent(max_inputs=1000)
 @modal.asgi_app()
 def ui():
     import gradio as gr
@@ -265,12 +263,8 @@ def ui():
 
     temp_dir = Path("/dev/shm")
 
-    async def generate_music(
-        prompt: str, duration: int = 10, format: str = "wav"
-    ):
-        audio_bytes = await generate.aio(
-            prompt, duration=duration, format=format
-        )
+    async def generate_music(prompt: str, duration: int = 10, format: str = "wav"):
+        audio_bytes = await generate.aio(prompt, duration=duration, format=format)
 
         audio_path = temp_dir / f"{uuid4()}.{format}"
         audio_path.write_bytes(audio_bytes)

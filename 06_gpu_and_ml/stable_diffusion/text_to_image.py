@@ -23,6 +23,7 @@ import io
 import random
 import time
 from pathlib import Path
+from typing import Optional
 
 import modal
 
@@ -70,7 +71,7 @@ with image.imports():
 
 # ## Implementing SD3.5 Large Turbo inference on Modal
 
-# We wrap inference in a Modal [Cls](https://modal.com/docs/guide/lifecycle-methods)
+# We wrap inference in a Modal [Cls](https://modal.com/docs/guide/lifecycle-functions)
 # that ensures models are loaded and then moved to the GPU once when a new container
 # starts, before the container picks up any work.
 
@@ -105,7 +106,7 @@ class Inference:
 
     @modal.method()
     def run(
-        self, prompt: str, batch_size: int = 4, seed: int = None
+        self, prompt: str, batch_size: int = 4, seed: Optional[int] = None
     ) -> list[bytes]:
         seed = seed if seed is not None else random.randint(0, 2**32 - 1)
         print("seeding RNG with", seed)
@@ -126,8 +127,8 @@ class Inference:
         torch.cuda.empty_cache()  # reduce fragmentation
         return image_output
 
-    @modal.web_endpoint(docs=True)
-    def web(self, prompt: str, seed: int = None):
+    @modal.fastapi_endpoint(docs=True)
+    def web(self, prompt: str, seed: Optional[int] = None):
         return Response(
             content=self.run.local(  # run in the same container
                 prompt, batch_size=1, seed=seed
@@ -158,7 +159,7 @@ def entrypoint(
     samples: int = 4,
     prompt: str = "A princess riding on a pony",
     batch_size: int = 4,
-    seed: int = None,
+    seed: Optional[int] = None,
 ):
     print(
         f"prompt => {prompt}",
@@ -198,7 +199,7 @@ def entrypoint(
 
 # ## Generating Stable Diffusion images via an API
 
-# The Modal `Cls` above also included a [`web_endpoint`](https://modal.com/docs/examples/basic_web),
+# The Modal `Cls` above also included a [`fastapi_endpoint`](https://modal.com/docs/examples/basic_web),
 # which adds a simple web API to the inference method.
 
 # To try it out, run
@@ -233,10 +234,8 @@ web_image = (
 )
 
 
-@app.function(
-    image=web_image,
-    allow_concurrent_inputs=1000,
-)
+@app.function(image=web_image)
+@modal.concurrent(max_inputs=1000)
 @modal.asgi_app()
 def ui():
     import fastapi.staticfiles
@@ -252,7 +251,7 @@ def ui():
             "index.html",
             {
                 "request": request,
-                "inference_url": Inference.web.web_url,
+                "inference_url": Inference.web.get_web_url(),
                 "model_name": "Stable Diffusion 3.5 Large Turbo",
                 "default_prompt": "A cinematic shot of a baby raccoon wearing an intricate italian priest robe.",
             },

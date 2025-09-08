@@ -1,5 +1,5 @@
 # ---
-# lambda-test: false
+# lambda-test: false  # deprecated
 # ---
 # # Structured output generation with Jsonformer
 #
@@ -32,9 +32,7 @@ def download_model():
     )
     model.save_pretrained(CACHE_PATH, safe_serialization=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_ID, use_fast=True, use_cache=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True, use_cache=True)
     tokenizer.save_pretrained(CACHE_PATH, safe_serialization=True)
 
 
@@ -50,7 +48,7 @@ image = (
     )
     .run_function(download_model)
 )
-app = modal.App("example-jsonformer")
+app = modal.App("example-jsonformer-generate")
 
 
 # ## Generate examples

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://modal.com">
-    <img src="https://modal-public-assets.s3.amazonaws.com/bigicon.png" height="96">
+    <img src="https://modal-cdn.com/Modal-Primary-Logo.png" height="96">
     <h3 align="center">Modal Examples</h3>
   </a>
 </p>
@@ -17,7 +17,7 @@ generally run the files in any folder much like you run ordinary Python programs
 command like:
 
 ```bash
-modal run 01_getting_started.hello_world
+modal run 01_getting_started/hello_world.py
 ```
 
 Although these scripts are run on your local machine, they'll communicate with
