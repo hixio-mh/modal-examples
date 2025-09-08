@@ -30,6 +30,14 @@ class InProgressJob(NamedTuple):
 
 @web_app.get("/api/episode/{podcast_id}/{episode_guid_hash}")
 async def get_episode(podcast_id: str, episode_guid_hash: str):
+    # Sanitize podcast_id and episode_guid_hash to avoid path traversal or illegal characters
+    import re
+    def is_safe_component(component):
+        # Only allow alphanumeric, underscore, dash (common for IDs/hashes)
+        return re.fullmatch(r'[A-Za-z0-9_\-]+', component) is not None
+    if not is_safe_component(podcast_id) or not is_safe_component(episode_guid_hash):
+        raise HTTPException(status_code=400, detail="Invalid podcast_id or episode_guid_hash")
+
     episode_metadata_path = get_episode_metadata_path(podcast_id, episode_guid_hash)
     transcription_path = get_transcript_path(episode_guid_hash)
 
